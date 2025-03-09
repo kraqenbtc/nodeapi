@@ -182,31 +182,26 @@ async def get_transactions_by_address(
     - **limit**: Maximum number of records to return (default: 50)
     - **offset**: Pagination offset
     """
-    # Query to find transactions related to the address
-    # Note: This is using JSONB functionality to search inside the raw_data
+    # Sadece sender_address ile eşleşen işlemleri ara
     tx_query = """
     SELECT tx_id, block_height, events_processed, created_at
     FROM transactions
-    WHERE raw_data @> '{"sender_address": "%s"}' OR
-          raw_data @> '{"sponsor_address": "%s"}' OR
-          raw_data::text ILIKE '%%"%s"%%'
+    WHERE raw_data->>'sender_address' = %s
     ORDER BY block_height DESC, tx_id
     LIMIT %s OFFSET %s
     """
     
     # Execute query with address parameters
-    tx_results = execute_query(tx_query % (address, address, address, limit, offset))
+    tx_results = execute_query(tx_query, (address, limit, offset))
     
     # Count total for pagination info
     count_query = """
     SELECT COUNT(*) as total
     FROM transactions
-    WHERE raw_data @> '{"sender_address": "%s"}' OR
-          raw_data @> '{"sponsor_address": "%s"}' OR
-          raw_data::text ILIKE '%%"%s"%%'
+    WHERE raw_data->>'sender_address' = %s
     """
     
-    count_result = execute_query(count_query % (address, address, address))
+    count_result = execute_query(count_query, (address,))
     total = count_result[0]['total'] if count_result else 0
     
     if not tx_results:
