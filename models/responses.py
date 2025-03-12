@@ -19,6 +19,8 @@ class TransactionResponse(BaseModel):
     block_time: Optional[int] = None  # Unix timestamp for block_time
     fee_rate: Optional[str] = None  # Fee rate from transaction
     event_count: Optional[int] = 0  # Number of events
+    sender_address: Optional[str] = None  # Sender address
+    tx_type: Optional[str] = None  # Transaction type (contract_call, token_transfer, etc)
     events: Optional[List[EventResponse]] = []
 
 class ErrorResponse(BaseModel):
