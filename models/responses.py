@@ -16,7 +16,9 @@ class TransactionResponse(BaseModel):
     block_height: int
     raw_data: Dict[str, Any]
     events_processed: bool
-    created_at: Optional[datetime] = None
+    block_time: Optional[int] = None  # Unix timestamp for block_time
+    fee_rate: Optional[str] = None  # Fee rate from transaction
+    event_count: Optional[int] = 0  # Number of events
     events: Optional[List[EventResponse]] = []
 
 class ErrorResponse(BaseModel):

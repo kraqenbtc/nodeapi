@@ -25,7 +25,14 @@ async def get_transaction(
     """
     # Get transaction info
     tx_query = """
-    SELECT tx_id, block_height, raw_data, events_processed, created_at
+    SELECT 
+        tx_id, 
+        block_height, 
+        raw_data, 
+        events_processed,
+        (raw_data->>'block_time')::integer as block_time,
+        raw_data->>'fee_rate' as fee_rate,
+        COALESCE((raw_data->>'event_count')::integer, 0) as event_count
     FROM transactions
     WHERE tx_id = %s
     """
@@ -45,7 +52,7 @@ async def get_transaction(
     # Get events if requested
     if include_events:
         events_query = """
-        SELECT tx_id, event_index, event_type, event_data, created_at
+        SELECT tx_id, event_index, event_type, event_data
         FROM events
         WHERE tx_id = %s
         ORDER BY event_index
@@ -57,6 +64,10 @@ async def get_transaction(
             if isinstance(event['event_data'], str):
                 event['event_data'] = json.loads(event['event_data'])
             events.append(event)
+    
+    # Update event_count with actual count if events were fetched
+    if include_events:
+        transaction['event_count'] = len(events)
     
     # Prepare response
     response_data = {
@@ -75,14 +86,14 @@ async def get_transaction(
 @router.get("", response_model=SuccessResponse)
 async def list_transactions(
     block_height: int = Query(None, description="Filter by block height"),
-    limit: int = Query(50, description="Pagination limit"),
+    limit: int = Query(20, description="Pagination limit (default: 20)"),
     offset: int = Query(0, description="Pagination offset")
 ):
     """
     List transactions with filtering and pagination.
     
     - **block_height**: Optional filter by block height
-    - **limit**: Maximum number of records to return
+    - **limit**: Maximum number of records to return (default: 20)
     - **offset**: Pagination offset
     """
     # Get total count
@@ -99,25 +110,40 @@ async def list_transactions(
     
     # Query transactions
     tx_query = """
-    SELECT tx_id, block_height, events_processed, created_at
-    FROM transactions
+    SELECT 
+        t.tx_id, 
+        t.block_height, 
+        t.events_processed,
+        (t.raw_data->>'block_time')::integer as block_time,
+        t.raw_data->>'fee_rate' as fee_rate,
+        COALESCE((t.raw_data->>'event_count')::integer, 0) as event_count,
+        (SELECT COUNT(*) FROM events e WHERE e.tx_id = t.tx_id) as actual_event_count
+    FROM transactions t
     """
     
     tx_params = []
     
     # Add filter
     if block_height is not None:
-        tx_query += " WHERE block_height = %s"
+        tx_query += " WHERE t.block_height = %s"
         tx_params.append(block_height)
     
     # Add sorting and pagination
-    tx_query += " ORDER BY block_height DESC, tx_id LIMIT %s OFFSET %s"
+    tx_query += " ORDER BY t.block_height DESC, t.tx_id LIMIT %s OFFSET %s"
     tx_params.extend([limit, offset])
     
     tx_results = execute_query(tx_query, tuple(tx_params))
     
+    # Process results
+    processed_results = []
+    for tx in tx_results:
+        processed_tx = dict(tx)
+        # Use actual_event_count if available, otherwise use event_count from raw data
+        processed_tx['event_count'] = processed_tx.pop('actual_event_count') or processed_tx['event_count']
+        processed_results.append(processed_tx)
+    
     return SuccessResponse(
-        data=tx_results,
+        data=processed_results,
         meta={
             "total": total,
             "limit": limit,
@@ -129,14 +155,14 @@ async def list_transactions(
 @router.get("/block/{block_height}", response_model=SuccessResponse)
 async def get_transactions_by_block(
     block_height: int = Path(..., description="Block height"),
-    limit: int = Query(50, description="Pagination limit"),
+    limit: int = Query(20, description="Pagination limit (default: 20)"),
     offset: int = Query(0, description="Pagination offset")
 ):
     """
     Get transactions by block height.
     
     - **block_height**: Block height
-    - **limit**: Maximum number of records to return
+    - **limit**: Maximum number of records to return (default: 20)
     - **offset**: Pagination offset
     """
     # Get total count for the block
@@ -149,17 +175,32 @@ async def get_transactions_by_block(
     
     # Query transactions
     tx_query = """
-    SELECT tx_id, block_height, events_processed, created_at
-    FROM transactions
-    WHERE block_height = %s
-    ORDER BY tx_id
+    SELECT 
+        t.tx_id, 
+        t.block_height, 
+        t.events_processed,
+        (t.raw_data->>'block_time')::integer as block_time,
+        t.raw_data->>'fee_rate' as fee_rate,
+        COALESCE((t.raw_data->>'event_count')::integer, 0) as event_count,
+        (SELECT COUNT(*) FROM events e WHERE e.tx_id = t.tx_id) as actual_event_count
+    FROM transactions t
+    WHERE t.block_height = %s
+    ORDER BY t.tx_id
     LIMIT %s OFFSET %s
     """
     
     tx_results = execute_query(tx_query, (block_height, limit, offset))
     
+    # Process results
+    processed_results = []
+    for tx in tx_results:
+        processed_tx = dict(tx)
+        # Use actual_event_count if available, otherwise use event_count from raw data
+        processed_tx['event_count'] = processed_tx.pop('actual_event_count') or processed_tx['event_count']
+        processed_results.append(processed_tx)
+    
     return SuccessResponse(
-        data=tx_results,
+        data=processed_results,
         meta={
             "block_height": block_height,
             "total": total,
@@ -172,22 +213,29 @@ async def get_transactions_by_block(
 @router.get("/address/{address}", response_model=SuccessResponse)
 async def get_transactions_by_address(
     address: str = Path(..., description="Blockchain address"),
-    limit: int = Query(50, description="Pagination limit"),
+    limit: int = Query(20, description="Pagination limit (default: 20)"),
     offset: int = Query(0, description="Pagination offset")
 ):
     """
     Get latest transactions by address.
     
     - **address**: Blockchain address (e.g., ST...)
-    - **limit**: Maximum number of records to return (default: 50)
+    - **limit**: Maximum number of records to return (default: 20)
     - **offset**: Pagination offset
     """
     # Sadece sender_address ile eşleşen işlemleri ara
     tx_query = """
-    SELECT tx_id, block_height, events_processed, created_at
-    FROM transactions
-    WHERE raw_data->>'sender_address' = %s
-    ORDER BY block_height DESC, tx_id
+    SELECT 
+        t.tx_id, 
+        t.block_height, 
+        t.events_processed,
+        (t.raw_data->>'block_time')::integer as block_time,
+        t.raw_data->>'fee_rate' as fee_rate,
+        COALESCE((t.raw_data->>'event_count')::integer, 0) as event_count,
+        (SELECT COUNT(*) FROM events e WHERE e.tx_id = t.tx_id) as actual_event_count
+    FROM transactions t
+    WHERE t.raw_data->>'sender_address' = %s
+    ORDER BY t.block_height DESC, t.tx_id
     LIMIT %s OFFSET %s
     """
     
@@ -215,8 +263,16 @@ async def get_transactions_by_address(
             }
         )
     
+    # Process results
+    processed_results = []
+    for tx in tx_results:
+        processed_tx = dict(tx)
+        # Use actual_event_count if available, otherwise use event_count from raw data
+        processed_tx['event_count'] = processed_tx.pop('actual_event_count') or processed_tx['event_count']
+        processed_results.append(processed_tx)
+    
     return SuccessResponse(
-        data=tx_results,
+        data=processed_results,
         meta={
             "address": address,
             "total": total,
