@@ -3,12 +3,19 @@ import uvicorn
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.middleware.gzip import GZipMiddleware
 from dotenv import load_dotenv
 
 # Import endpoints
 from endpoints.transactions import router as transactions_router
 from endpoints.tokens import router as tokens_router
 from models.responses import ErrorResponse
+
+# Import custom middleware
+from middleware import PerformanceMiddleware, RequestLoggingMiddleware
+
+# Import cache module for statistics endpoint
+from db.cache import get_cache_stats, clear_cache
 
 # Load .env file
 load_dotenv()
@@ -30,6 +37,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add performance monitoring middleware
+app.add_middleware(
+    PerformanceMiddleware,
+    slow_threshold_ms=1000  # 1 saniyeden uzun süren istekler yavaş olarak işaretlenir
+)
+
+# Add request logging middleware
+app.add_middleware(RequestLoggingMiddleware)
+
+# Add GZip compression for responses
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Error handler
 @app.exception_handler(Exception)
@@ -55,6 +74,17 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+# Cache statistics endpoint
+@app.get("/stats/cache")
+async def cache_stats():
+    return get_cache_stats()
+
+# Cache clear endpoint
+@app.post("/stats/cache/clear")
+async def clear_cache_endpoint():
+    clear_cache()
+    return {"status": "success", "message": "Cache cleared"}
 
 # Add routers
 app.include_router(transactions_router)

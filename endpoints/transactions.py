@@ -23,7 +23,7 @@ async def get_transaction(
     - **tx_id**: The transaction ID
     - **include_events**: If set to true, includes related events in the response
     """
-    # Get transaction info
+    # Get transaction info - using direct jsonb path extraction for better performance
     tx_query = """
     SELECT 
         tx_id, 
@@ -55,7 +55,7 @@ async def get_transaction(
     
     events = []
     
-    # Get events if requested
+    # Get events if requested - with a single optimized query
     if include_events:
         events_query = """
         SELECT tx_id, event_index, event_type, event_data
@@ -114,7 +114,7 @@ async def list_transactions(
     count_result = execute_query(count_query, tuple(count_params) if count_params else None)
     total = count_result[0]['total'] if count_result else 0
     
-    # Query transactions
+    # Optimized query with a single join instead of a subquery for each row
     tx_query = """
     SELECT 
         t.tx_id, 
@@ -129,8 +129,9 @@ async def list_transactions(
             ELSE NULL
         END as function_name,
         COALESCE((t.raw_data->>'event_count')::integer, 0) as event_count,
-        (SELECT COUNT(*) FROM events e WHERE e.tx_id = t.tx_id) as actual_event_count
+        COUNT(e.id) as actual_event_count
     FROM transactions t
+    LEFT JOIN events e ON t.tx_id = e.tx_id
     """
     
     tx_params = []
@@ -139,6 +140,9 @@ async def list_transactions(
     if block_height is not None:
         tx_query += " WHERE t.block_height = %s"
         tx_params.append(block_height)
+    
+    # Add group by for the aggregation
+    tx_query += " GROUP BY t.tx_id, t.block_height, t.events_processed, t.raw_data"
     
     # Add sorting and pagination
     tx_query += " ORDER BY t.block_height DESC, t.tx_id LIMIT %s OFFSET %s"
@@ -185,7 +189,7 @@ async def get_transactions_by_block(
     if total == 0:
         raise HTTPException(status_code=404, detail=f"No transactions found for block {block_height}")
     
-    # Query transactions
+    # Optimized query with a single join instead of a subquery for each row
     tx_query = """
     SELECT 
         t.tx_id, 
@@ -200,9 +204,11 @@ async def get_transactions_by_block(
             ELSE NULL
         END as function_name,
         COALESCE((t.raw_data->>'event_count')::integer, 0) as event_count,
-        (SELECT COUNT(*) FROM events e WHERE e.tx_id = t.tx_id) as actual_event_count
+        COUNT(e.id) as actual_event_count
     FROM transactions t
+    LEFT JOIN events e ON t.tx_id = e.tx_id
     WHERE t.block_height = %s
+    GROUP BY t.tx_id, t.block_height, t.events_processed, t.raw_data
     ORDER BY t.tx_id
     LIMIT %s OFFSET %s
     """
@@ -241,7 +247,7 @@ async def get_transactions_by_address(
     - **limit**: Maximum number of records to return (default: 20)
     - **offset**: Pagination offset
     """
-    # Sadece sender_address ile eşleşen işlemleri ara
+    # Optimize query with a join instead of subquery
     tx_query = """
     SELECT 
         t.tx_id, 
@@ -256,9 +262,11 @@ async def get_transactions_by_address(
             ELSE NULL
         END as function_name,
         COALESCE((t.raw_data->>'event_count')::integer, 0) as event_count,
-        (SELECT COUNT(*) FROM events e WHERE e.tx_id = t.tx_id) as actual_event_count
+        COUNT(e.id) as actual_event_count
     FROM transactions t
+    LEFT JOIN events e ON t.tx_id = e.tx_id
     WHERE t.raw_data->>'sender_address' = %s
+    GROUP BY t.tx_id, t.block_height, t.events_processed, t.raw_data
     ORDER BY t.block_height DESC, t.tx_id
     LIMIT %s OFFSET %s
     """
