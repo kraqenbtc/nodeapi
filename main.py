@@ -86,9 +86,9 @@ async def clear_cache_endpoint():
     clear_cache()
     return {"status": "success", "message": "Cache cleared"}
 
-# Add routers directly
-app.include_router(transactions_router, prefix="/transactions", tags=["transactions"])
-app.include_router(tokens_router, tags=["tokens"])
+# Add routers directly - DO NOT add prefix because prefixes are already defined in each router
+app.include_router(transactions_router)  # prefix="/transactions" is already in the router definition
+app.include_router(tokens_router)        # prefix="/tokens" is already in the router definition
 
 # Start application (if run directly)
 if __name__ == "__main__":
