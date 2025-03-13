@@ -13,22 +13,17 @@ router = APIRouter(
 )
 
 @router.get("/{tx_id}", response_model=SuccessResponse)
-async def get_transaction(
-    tx_id: str = Path(..., description="Transaction ID"),
-    include_events: bool = Query(True, description="Include events in response")
-):
+async def get_transaction(tx_id: str = Path(..., description="Transaction ID")):
     """
-    Get transaction details and its events by transaction ID.
+    Get transaction details by transaction ID.
     
-    - **tx_id**: The transaction ID
-    - **include_events**: If set to true, includes related events in the response
+    - **tx_id**: Transaction ID
     """
-    # Get transaction info - using direct jsonb path extraction for better performance
+    # Get transaction data without JOIN
     tx_query = """
     SELECT 
         tx_id, 
         block_height, 
-        raw_data, 
         events_processed,
         (raw_data->>'block_time')::integer as block_time,
         raw_data->>'fee_rate' as fee_rate,
@@ -38,53 +33,48 @@ async def get_transaction(
             WHEN raw_data->>'tx_type' = 'contract_call' THEN raw_data->'contract_call'->>'function_name'
             ELSE NULL
         END as function_name,
-        COALESCE((raw_data->>'event_count')::integer, 0) as event_count
+        COALESCE((raw_data->>'event_count')::integer, 0) as event_count,
+        raw_data
     FROM transactions
     WHERE tx_id = %s
     """
-    tx_results = execute_query(tx_query, (tx_id,))
     
-    if not tx_results:
+    tx_result = execute_query(tx_query, (tx_id,))
+    
+    if not tx_result:
         raise HTTPException(status_code=404, detail=f"Transaction {tx_id} not found")
     
-    transaction = tx_results[0]
+    transaction = dict(tx_result[0])
     
-    # Convert JSON to dictionary if it's a string
-    if isinstance(transaction['raw_data'], str):
-        transaction['raw_data'] = json.loads(transaction['raw_data'])
+    # Get event count in a separate query
+    event_count_query = "SELECT COUNT(*) as count FROM events WHERE tx_id = %s"
+    event_count_result = execute_query(event_count_query, (tx_id,))
     
-    events = []
+    if event_count_result:
+        transaction['event_count'] = event_count_result[0]['count']
     
-    # Get events if requested - with a single optimized query
-    if include_events:
-        events_query = """
-        SELECT tx_id, event_index, event_type, event_data
-        FROM events
-        WHERE tx_id = %s
-        ORDER BY event_index
-        """
-        events_results = execute_query(events_query, (tx_id,))
-        
-        for event in events_results:
-            # Convert JSON to dictionary if it's a string
-            if isinstance(event['event_data'], str):
-                event['event_data'] = json.loads(event['event_data'])
-            events.append(event)
+    # Get events for this transaction
+    events_query = """
+    SELECT 
+        id,
+        event_index,
+        event_type,
+        contract_id,
+        tx_id,
+        block_height,
+        raw_data
+    FROM events
+    WHERE tx_id = %s
+    ORDER BY event_index
+    """
     
-    # Update event_count with actual count if events were fetched
-    if include_events:
-        transaction['event_count'] = len(events)
+    events = execute_query(events_query, (tx_id,))
     
-    # Prepare response
-    response_data = {
-        **transaction,
-        "events": events
-    }
-    
+    # Return both transaction and its events
     return SuccessResponse(
-        data=response_data,
-        meta={
-            "events_count": len(events)
+        data={
+            "transaction": transaction,
+            "events": events
         }
     )
 
@@ -114,52 +104,64 @@ async def list_transactions(
     count_result = execute_query(count_query, tuple(count_params) if count_params else None)
     total = count_result[0]['total'] if count_result else 0
     
-    # Optimized query with a single join instead of a subquery for each row
+    # Use a simpler query without JOIN to avoid timeout
     tx_query = """
     SELECT 
-        t.tx_id, 
-        t.block_height, 
-        t.events_processed,
-        (t.raw_data->>'block_time')::integer as block_time,
-        t.raw_data->>'fee_rate' as fee_rate,
-        t.raw_data->>'sender_address' as sender_address,
-        t.raw_data->>'tx_type' as tx_type,
+        tx_id, 
+        block_height, 
+        events_processed,
+        (raw_data->>'block_time')::integer as block_time,
+        raw_data->>'fee_rate' as fee_rate,
+        raw_data->>'sender_address' as sender_address,
+        raw_data->>'tx_type' as tx_type,
         CASE 
-            WHEN t.raw_data->>'tx_type' = 'contract_call' THEN t.raw_data->'contract_call'->>'function_name'
+            WHEN raw_data->>'tx_type' = 'contract_call' THEN raw_data->'contract_call'->>'function_name'
             ELSE NULL
         END as function_name,
-        COALESCE((t.raw_data->>'event_count')::integer, 0) as event_count,
-        COUNT(e.id) as actual_event_count
-    FROM transactions t
-    LEFT JOIN events e ON t.tx_id = e.tx_id
+        COALESCE((raw_data->>'event_count')::integer, 0) as event_count
+    FROM transactions
     """
     
     tx_params = []
     
     # Add filter
     if block_height is not None:
-        tx_query += " WHERE t.block_height = %s"
+        tx_query += " WHERE block_height = %s"
         tx_params.append(block_height)
     
-    # Add group by for the aggregation
-    tx_query += " GROUP BY t.tx_id, t.block_height, t.events_processed, t.raw_data"
-    
     # Add sorting and pagination
-    tx_query += " ORDER BY t.block_height DESC, t.tx_id LIMIT %s OFFSET %s"
+    tx_query += " ORDER BY block_height DESC, tx_id LIMIT %s OFFSET %s"
     tx_params.extend([limit, offset])
     
     tx_results = execute_query(tx_query, tuple(tx_params))
     
-    # Process results
-    processed_results = []
-    for tx in tx_results:
-        processed_tx = dict(tx)
-        # Use actual_event_count if available, otherwise use event_count from raw data
-        processed_tx['event_count'] = processed_tx.pop('actual_event_count') or processed_tx['event_count']
-        processed_results.append(processed_tx)
+    # If we have results and not too many, we can fetch accurate event counts
+    if tx_results and len(tx_results) <= 20:
+        # Get tx_ids for all transactions
+        tx_ids = [tx['tx_id'] for tx in tx_results]
+        tx_ids_str = ','.join([f"'{tx_id}'" for tx_id in tx_ids])
+        
+        # Get event counts in a single query
+        if tx_ids:
+            event_count_query = f"""
+            SELECT tx_id, COUNT(*) as count 
+            FROM events 
+            WHERE tx_id IN ({tx_ids_str})
+            GROUP BY tx_id
+            """
+            event_counts = execute_query(event_count_query)
+            
+            # Convert to dictionary for easy lookup
+            event_count_dict = {ec['tx_id']: ec['count'] for ec in event_counts}
+            
+            # Update event counts in results
+            for tx in tx_results:
+                tx_id = tx['tx_id']
+                if tx_id in event_count_dict:
+                    tx['event_count'] = event_count_dict[tx_id]
     
     return SuccessResponse(
-        data=processed_results,
+        data=tx_results,
         meta={
             "total": total,
             "limit": limit,
@@ -189,42 +191,56 @@ async def get_transactions_by_block(
     if total == 0:
         raise HTTPException(status_code=404, detail=f"No transactions found for block {block_height}")
     
-    # Optimized query with a single join instead of a subquery for each row
+    # Use a simpler query without JOIN to avoid timeout
     tx_query = """
     SELECT 
-        t.tx_id, 
-        t.block_height, 
-        t.events_processed,
-        (t.raw_data->>'block_time')::integer as block_time,
-        t.raw_data->>'fee_rate' as fee_rate,
-        t.raw_data->>'sender_address' as sender_address,
-        t.raw_data->>'tx_type' as tx_type,
+        tx_id, 
+        block_height, 
+        events_processed,
+        (raw_data->>'block_time')::integer as block_time,
+        raw_data->>'fee_rate' as fee_rate,
+        raw_data->>'sender_address' as sender_address,
+        raw_data->>'tx_type' as tx_type,
         CASE 
-            WHEN t.raw_data->>'tx_type' = 'contract_call' THEN t.raw_data->'contract_call'->>'function_name'
+            WHEN raw_data->>'tx_type' = 'contract_call' THEN raw_data->'contract_call'->>'function_name'
             ELSE NULL
         END as function_name,
-        COALESCE((t.raw_data->>'event_count')::integer, 0) as event_count,
-        COUNT(e.id) as actual_event_count
-    FROM transactions t
-    LEFT JOIN events e ON t.tx_id = e.tx_id
-    WHERE t.block_height = %s
-    GROUP BY t.tx_id, t.block_height, t.events_processed, t.raw_data
-    ORDER BY t.tx_id
+        COALESCE((raw_data->>'event_count')::integer, 0) as event_count
+    FROM transactions
+    WHERE block_height = %s
+    ORDER BY tx_id
     LIMIT %s OFFSET %s
     """
     
     tx_results = execute_query(tx_query, (block_height, limit, offset))
     
-    # Process results
-    processed_results = []
-    for tx in tx_results:
-        processed_tx = dict(tx)
-        # Use actual_event_count if available, otherwise use event_count from raw data
-        processed_tx['event_count'] = processed_tx.pop('actual_event_count') or processed_tx['event_count']
-        processed_results.append(processed_tx)
+    # If we have results and not too many, we can fetch accurate event counts
+    if tx_results and len(tx_results) <= 20:
+        # Get tx_ids for all transactions
+        tx_ids = [tx['tx_id'] for tx in tx_results]
+        tx_ids_str = ','.join([f"'{tx_id}'" for tx_id in tx_ids])
+        
+        # Get event counts in a single query
+        if tx_ids:
+            event_count_query = f"""
+            SELECT tx_id, COUNT(*) as count 
+            FROM events 
+            WHERE tx_id IN ({tx_ids_str})
+            GROUP BY tx_id
+            """
+            event_counts = execute_query(event_count_query)
+            
+            # Convert to dictionary for easy lookup
+            event_count_dict = {ec['tx_id']: ec['count'] for ec in event_counts}
+            
+            # Update event counts in results
+            for tx in tx_results:
+                tx_id = tx['tx_id']
+                if tx_id in event_count_dict:
+                    tx['event_count'] = event_count_dict[tx_id]
     
     return SuccessResponse(
-        data=processed_results,
+        data=tx_results,
         meta={
             "block_height": block_height,
             "total": total,
@@ -247,27 +263,24 @@ async def get_transactions_by_address(
     - **limit**: Maximum number of records to return (default: 20)
     - **offset**: Pagination offset
     """
-    # Optimize query with a join instead of subquery
+    # Use a simpler query without JOIN to avoid timeout
     tx_query = """
     SELECT 
-        t.tx_id, 
-        t.block_height, 
-        t.events_processed,
-        (t.raw_data->>'block_time')::integer as block_time,
-        t.raw_data->>'fee_rate' as fee_rate,
-        t.raw_data->>'sender_address' as sender_address,
-        t.raw_data->>'tx_type' as tx_type,
+        tx_id, 
+        block_height, 
+        events_processed,
+        (raw_data->>'block_time')::integer as block_time,
+        raw_data->>'fee_rate' as fee_rate,
+        raw_data->>'sender_address' as sender_address,
+        raw_data->>'tx_type' as tx_type,
         CASE 
-            WHEN t.raw_data->>'tx_type' = 'contract_call' THEN t.raw_data->'contract_call'->>'function_name'
+            WHEN raw_data->>'tx_type' = 'contract_call' THEN raw_data->'contract_call'->>'function_name'
             ELSE NULL
         END as function_name,
-        COALESCE((t.raw_data->>'event_count')::integer, 0) as event_count,
-        COUNT(e.id) as actual_event_count
-    FROM transactions t
-    LEFT JOIN events e ON t.tx_id = e.tx_id
-    WHERE t.raw_data->>'sender_address' = %s
-    GROUP BY t.tx_id, t.block_height, t.events_processed, t.raw_data
-    ORDER BY t.block_height DESC, t.tx_id
+        COALESCE((raw_data->>'event_count')::integer, 0) as event_count
+    FROM transactions
+    WHERE raw_data->>'sender_address' = %s
+    ORDER BY block_height DESC, tx_id
     LIMIT %s OFFSET %s
     """
     
@@ -295,16 +308,33 @@ async def get_transactions_by_address(
             }
         )
     
-    # Process results
-    processed_results = []
-    for tx in tx_results:
-        processed_tx = dict(tx)
-        # Use actual_event_count if available, otherwise use event_count from raw data
-        processed_tx['event_count'] = processed_tx.pop('actual_event_count') or processed_tx['event_count']
-        processed_results.append(processed_tx)
+    # If we have results and not too many, we can fetch accurate event counts
+    if tx_results and len(tx_results) <= 20:
+        # Get tx_ids for all transactions
+        tx_ids = [tx['tx_id'] for tx in tx_results]
+        tx_ids_str = ','.join([f"'{tx_id}'" for tx_id in tx_ids])
+        
+        # Get event counts in a single query
+        if tx_ids:
+            event_count_query = f"""
+            SELECT tx_id, COUNT(*) as count 
+            FROM events 
+            WHERE tx_id IN ({tx_ids_str})
+            GROUP BY tx_id
+            """
+            event_counts = execute_query(event_count_query)
+            
+            # Convert to dictionary for easy lookup
+            event_count_dict = {ec['tx_id']: ec['count'] for ec in event_counts}
+            
+            # Update event counts in results
+            for tx in tx_results:
+                tx_id = tx['tx_id']
+                if tx_id in event_count_dict:
+                    tx['event_count'] = event_count_dict[tx_id]
     
     return SuccessResponse(
-        data=processed_results,
+        data=tx_results,
         meta={
             "address": address,
             "total": total,

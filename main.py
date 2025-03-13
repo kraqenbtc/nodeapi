@@ -6,9 +6,8 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.gzip import GZipMiddleware
 from dotenv import load_dotenv
 
-# Import endpoints
-from endpoints.transactions import router as transactions_router
-from endpoints.tokens import router as tokens_router
+# Import endpoints with the optimized router
+from endpoints import api_router
 from models.responses import ErrorResponse
 
 # Import custom middleware
@@ -41,7 +40,7 @@ app.add_middleware(
 # Add performance monitoring middleware
 app.add_middleware(
     PerformanceMiddleware,
-    slow_threshold_ms=1000  # 1 saniyeden uzun süren istekler yavaş olarak işaretlenir
+    slow_threshold_ms=1000  # Log requests that take longer than 1 second
 )
 
 # Add request logging middleware
@@ -86,9 +85,8 @@ async def clear_cache_endpoint():
     clear_cache()
     return {"status": "success", "message": "Cache cleared"}
 
-# Add routers
-app.include_router(transactions_router)
-app.include_router(tokens_router)
+# Add optimized API router
+app.include_router(api_router)
 
 # Start application (if run directly)
 if __name__ == "__main__":
