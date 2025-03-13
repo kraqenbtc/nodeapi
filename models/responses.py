@@ -21,6 +21,7 @@ class TransactionResponse(BaseModel):
     event_count: Optional[int] = 0  # Number of events
     sender_address: Optional[str] = None  # Sender address
     tx_type: Optional[str] = None  # Transaction type (contract_call, token_transfer, etc)
+    function_name: Optional[str] = None  # Function name for contract_call transactions
     events: Optional[List[EventResponse]] = []
 
 class ErrorResponse(BaseModel):

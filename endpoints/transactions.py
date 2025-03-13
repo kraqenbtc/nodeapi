@@ -34,6 +34,10 @@ async def get_transaction(
         raw_data->>'fee_rate' as fee_rate,
         raw_data->>'sender_address' as sender_address,
         raw_data->>'tx_type' as tx_type,
+        CASE 
+            WHEN raw_data->>'tx_type' = 'contract_call' THEN raw_data->'contract_call'->>'function_name'
+            ELSE NULL
+        END as function_name,
         COALESCE((raw_data->>'event_count')::integer, 0) as event_count
     FROM transactions
     WHERE tx_id = %s
@@ -120,6 +124,10 @@ async def list_transactions(
         t.raw_data->>'fee_rate' as fee_rate,
         t.raw_data->>'sender_address' as sender_address,
         t.raw_data->>'tx_type' as tx_type,
+        CASE 
+            WHEN t.raw_data->>'tx_type' = 'contract_call' THEN t.raw_data->'contract_call'->>'function_name'
+            ELSE NULL
+        END as function_name,
         COALESCE((t.raw_data->>'event_count')::integer, 0) as event_count,
         (SELECT COUNT(*) FROM events e WHERE e.tx_id = t.tx_id) as actual_event_count
     FROM transactions t
@@ -187,6 +195,10 @@ async def get_transactions_by_block(
         t.raw_data->>'fee_rate' as fee_rate,
         t.raw_data->>'sender_address' as sender_address,
         t.raw_data->>'tx_type' as tx_type,
+        CASE 
+            WHEN t.raw_data->>'tx_type' = 'contract_call' THEN t.raw_data->'contract_call'->>'function_name'
+            ELSE NULL
+        END as function_name,
         COALESCE((t.raw_data->>'event_count')::integer, 0) as event_count,
         (SELECT COUNT(*) FROM events e WHERE e.tx_id = t.tx_id) as actual_event_count
     FROM transactions t
@@ -239,6 +251,10 @@ async def get_transactions_by_address(
         t.raw_data->>'fee_rate' as fee_rate,
         t.raw_data->>'sender_address' as sender_address,
         t.raw_data->>'tx_type' as tx_type,
+        CASE 
+            WHEN t.raw_data->>'tx_type' = 'contract_call' THEN t.raw_data->'contract_call'->>'function_name'
+            ELSE NULL
+        END as function_name,
         COALESCE((t.raw_data->>'event_count')::integer, 0) as event_count,
         (SELECT COUNT(*) FROM events e WHERE e.tx_id = t.tx_id) as actual_event_count
     FROM transactions t
