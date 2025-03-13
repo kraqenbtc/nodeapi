@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 
 # Import endpoints
 from endpoints.transactions import router as transactions_router
+from endpoints.tokens import router as tokens_router
 from models.responses import ErrorResponse
 
 # Load .env file
@@ -57,6 +58,7 @@ async def health():
 
 # Add routers
 app.include_router(transactions_router)
+app.include_router(tokens_router)
 
 # Start application (if run directly)
 if __name__ == "__main__":

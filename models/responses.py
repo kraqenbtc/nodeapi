@@ -33,4 +33,14 @@ class SuccessResponse(BaseModel):
     """Success response model"""
     status: str = "success"
     data: Any
-    meta: Optional[Dict[str, Any]] = Field(default_factory=dict) 
+    meta: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+class TokenResponse(BaseModel):
+    """Token response model"""
+    contract_principal: str
+    asset_identifier: Optional[str] = None
+    name: Optional[str] = None
+    symbol: Optional[str] = None
+    image_uri: Optional[str] = None
+    decimals_from_contract: Optional[float] = None
+    total_supply_from_contract: Optional[float] = None 
