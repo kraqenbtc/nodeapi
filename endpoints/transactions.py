@@ -67,10 +67,8 @@ async def get_transaction(
             id,
             event_index,
             event_type,
-            contract_id,
             tx_id,
-            block_height,
-            raw_data
+            event_data as raw_data
         FROM events
         WHERE tx_id = %s
         ORDER BY event_index
@@ -78,7 +76,7 @@ async def get_transaction(
         
         events = execute_query(events_query, (tx_id,))
         
-        # Process raw_data for each event if needed
+        # Process event_data for each event if needed
         for event in events:
             if isinstance(event.get('raw_data'), str):
                 try:
