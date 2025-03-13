@@ -13,11 +13,15 @@ router = APIRouter(
 )
 
 @router.get("/{tx_id}", response_model=SuccessResponse)
-async def get_transaction(tx_id: str = Path(..., description="Transaction ID")):
+async def get_transaction(
+    tx_id: str = Path(..., description="Transaction ID"),
+    include_events: bool = Query(True, description="Include events in response")
+):
     """
     Get transaction details by transaction ID.
     
     - **tx_id**: Transaction ID
+    - **include_events**: If set to true, includes related events in the response
     """
     # Get transaction data without JOIN
     tx_query = """
@@ -53,28 +57,43 @@ async def get_transaction(tx_id: str = Path(..., description="Transaction ID")):
     if event_count_result:
         transaction['event_count'] = event_count_result[0]['count']
     
-    # Get events for this transaction
-    events_query = """
-    SELECT 
-        id,
-        event_index,
-        event_type,
-        contract_id,
-        tx_id,
-        block_height,
-        raw_data
-    FROM events
-    WHERE tx_id = %s
-    ORDER BY event_index
-    """
+    # Initialize events
+    events = []
     
-    events = execute_query(events_query, (tx_id,))
+    # Get events for this transaction if requested
+    if include_events:
+        events_query = """
+        SELECT 
+            id,
+            event_index,
+            event_type,
+            contract_id,
+            tx_id,
+            block_height,
+            raw_data
+        FROM events
+        WHERE tx_id = %s
+        ORDER BY event_index
+        """
+        
+        events = execute_query(events_query, (tx_id,))
+        
+        # Process raw_data for each event if needed
+        for event in events:
+            if isinstance(event.get('raw_data'), str):
+                try:
+                    event['raw_data'] = json.loads(event['raw_data'])
+                except:
+                    pass
     
     # Return both transaction and its events
     return SuccessResponse(
         data={
             "transaction": transaction,
             "events": events
+        },
+        meta={
+            "events_count": len(events)
         }
     )
 
