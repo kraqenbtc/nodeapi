@@ -6,8 +6,9 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.gzip import GZipMiddleware
 from dotenv import load_dotenv
 
-# Import endpoints with the optimized router
-from endpoints import api_router
+# Import endpoints directly - only import modules that actually exist
+from endpoints.transactions import router as transactions_router
+from endpoints.tokens import router as tokens_router
 from models.responses import ErrorResponse
 
 # Import custom middleware
@@ -85,8 +86,9 @@ async def clear_cache_endpoint():
     clear_cache()
     return {"status": "success", "message": "Cache cleared"}
 
-# Add optimized API router
-app.include_router(api_router)
+# Add routers directly
+app.include_router(transactions_router, prefix="/transactions", tags=["transactions"])
+app.include_router(tokens_router, tags=["tokens"])
 
 # Start application (if run directly)
 if __name__ == "__main__":
