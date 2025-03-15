@@ -358,4 +358,110 @@ async def get_transactions_by_address(
             "limit": limit,
             "offset": offset
         }
+    )
+
+
+@router.get("/token-transfers/{address}/{contract_principal}", response_model=SuccessResponse)
+async def get_token_transfers(
+    address: str = Path(..., description="Blockchain address (sender or recipient)"),
+    contract_principal: str = Path(..., description="Token contract principal"),
+    limit: int = Query(100, description="Pagination limit (default: 100)"),
+    offset: int = Query(0, description="Pagination offset")
+):
+    """
+    Get all token transfers (mint, burn, transfer) for an address and specific token.
+    
+    - **address**: Blockchain address that is either sender or recipient 
+    - **contract_principal**: Token contract principal
+    - **limit**: Maximum number of records to return (default: 100)
+    - **offset**: Pagination offset
+    """
+    # Find the asset_id for the contract principal
+    token_query = """
+    SELECT asset_id 
+    FROM tokens 
+    WHERE contract_principal = %s
+    """
+    
+    token_result = execute_query(token_query, (contract_principal,))
+    
+    if not token_result:
+        raise HTTPException(status_code=404, detail=f"Token with contract principal {contract_principal} not found")
+    
+    asset_id = token_result[0]['asset_id']
+    
+    # Get total count of token transfers for this asset_id and address
+    count_query = """
+    SELECT COUNT(*) as total
+    FROM events
+    WHERE event_type = 'fungible_token_asset'
+    AND (event_data::jsonb->'asset'->>'asset_id') = %s
+    AND (
+        (event_data::jsonb->'asset'->>'sender') = %s 
+        OR (event_data::jsonb->'asset'->>'recipient') = %s
+    )
+    """
+    
+    count_result = execute_query(count_query, (asset_id, address, address))
+    total = count_result[0]['total'] if count_result else 0
+    
+    if total == 0:
+        return SuccessResponse(
+            data=[],
+            meta={
+                "address": address,
+                "contract_principal": contract_principal,
+                "asset_id": asset_id,
+                "total": 0,
+                "limit": limit,
+                "offset": offset
+            }
+        )
+    
+    # Get token transfers
+    transfers_query = """
+    SELECT 
+        e.id,
+        e.tx_id,
+        e.event_index,
+        e.event_type,
+        e.event_data,
+        t.block_height,
+        (t.raw_data->>'block_time')::integer as block_time,
+        event_data::jsonb->'asset'->>'asset_event_type' as asset_event_type,
+        event_data::jsonb->'asset'->>'sender' as sender,
+        event_data::jsonb->'asset'->>'recipient' as recipient,
+        event_data::jsonb->'asset'->>'amount' as amount
+    FROM events e
+    JOIN transactions t ON e.tx_id = t.tx_id
+    WHERE e.event_type = 'fungible_token_asset'
+    AND (e.event_data::jsonb->'asset'->>'asset_id') = %s
+    AND (
+        (e.event_data::jsonb->'asset'->>'sender') = %s 
+        OR (e.event_data::jsonb->'asset'->>'recipient') = %s
+    )
+    ORDER BY t.block_height DESC, e.event_index
+    LIMIT %s OFFSET %s
+    """
+    
+    transfers = execute_query(transfers_query, (asset_id, address, address, limit, offset))
+    
+    # Process event_data if needed
+    for transfer in transfers:
+        if isinstance(transfer.get('event_data'), str):
+            try:
+                transfer['event_data'] = json.loads(transfer['event_data'])
+            except:
+                pass
+    
+    return SuccessResponse(
+        data=transfers,
+        meta={
+            "address": address,
+            "contract_principal": contract_principal,
+            "asset_id": asset_id,
+            "total": total,
+            "limit": limit,
+            "offset": offset
+        }
     ) 
