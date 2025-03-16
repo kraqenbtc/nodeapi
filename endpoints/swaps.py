@@ -60,14 +60,15 @@ async def get_recent_swaps(
     query_params = []
     
     if start_date:
-        where_clause += " WHERE block_time >= TO_TIMESTAMP(%s, 'YYYY-MM-DD')"
+        # Convert YYYY-MM-DD to Unix timestamp
+        where_clause += " WHERE CAST(block_time AS BIGINT) >= EXTRACT(EPOCH FROM TO_TIMESTAMP(%s, 'YYYY-MM-DD'))"
         query_params.append(start_date)
         
     if end_date:
         if where_clause:
-            where_clause += " AND block_time <= TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second'"
+            where_clause += " AND CAST(block_time AS BIGINT) <= EXTRACT(EPOCH FROM TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second')"
         else:
-            where_clause += " WHERE block_time <= TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second'"
+            where_clause += " WHERE CAST(block_time AS BIGINT) <= EXTRACT(EPOCH FROM TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second')"
         query_params.append(end_date)
     
     # Count total swaps
@@ -138,21 +139,27 @@ async def get_swaps_by_contract(
         logger.debug(f"Request params: contract_principal={contract_principal}, user_address={user_address}, " +
                     f"limit={limit}, offset={offset}, start_date={start_date}, end_date={end_date}")
     
-    # Use the GIN index for efficient JSONB search
-    # There are two ways to search: either directly on specific keys if they exist,
-    # or a more general text search
-    
-    # Method 1: If the contract_principal is stored in a known key in swap_details
-    # filter_condition = "swap_details->>'contract_principal' = %s"
-    # search_param = contract_principal
-    
     # Method 2: Text search across all JSONB (more flexible but potentially slower)
-    filter_condition = "swap_details::text ILIKE %s"
-    search_param = f"%{contract_principal}%"
+    # Use EXISTS and JSON path operations to check if any element in the array contains the contract_principal
+    filter_condition = """
+    (
+        swap_details::text ILIKE %s
+        OR EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(swap_details) as swap_item
+            WHERE 
+                swap_item->>'in_asset' LIKE %s
+                OR swap_item->>'out_asset' LIKE %s
+                OR swap_item->>'contract_address' LIKE %s
+        )
+    )
+    """
+    # Create search parameters for each field we want to check
+    contract_like = f"%{contract_principal}%"
     
     # Build the WHERE clause based on filters
     where_clause = f"WHERE {filter_condition}"
-    query_params = [search_param]
+    query_params = [contract_like, contract_like, contract_like, contract_like]
     
     # Add user_address filter if provided
     if user_address:
@@ -160,11 +167,11 @@ async def get_swaps_by_contract(
         query_params.append(user_address)
     
     if start_date:
-        where_clause += " AND block_time >= TO_TIMESTAMP(%s, 'YYYY-MM-DD')"
+        where_clause += " AND CAST(block_time AS BIGINT) >= EXTRACT(EPOCH FROM TO_TIMESTAMP(%s, 'YYYY-MM-DD'))"
         query_params.append(start_date)
         
     if end_date:
-        where_clause += " AND block_time <= TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second'"
+        where_clause += " AND CAST(block_time AS BIGINT) <= EXTRACT(EPOCH FROM TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second')"
         query_params.append(end_date)
     
     # Count total swaps with this contract
@@ -238,11 +245,11 @@ async def get_swaps_by_user(
     query_params = [user_address]
     
     if start_date:
-        where_clause += " AND block_time >= TO_TIMESTAMP(%s, 'YYYY-MM-DD')"
+        where_clause += " AND CAST(block_time AS BIGINT) >= EXTRACT(EPOCH FROM TO_TIMESTAMP(%s, 'YYYY-MM-DD'))"
         query_params.append(start_date)
         
     if end_date:
-        where_clause += " AND block_time <= TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second'"
+        where_clause += " AND CAST(block_time AS BIGINT) <= EXTRACT(EPOCH FROM TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second')"
         query_params.append(end_date)
     
     # Count total swaps for this user
@@ -325,11 +332,11 @@ async def filter_swaps(
     
     # Date filters
     if start_date:
-        where_conditions.append("block_time >= TO_TIMESTAMP(%s, 'YYYY-MM-DD')")
+        where_conditions.append("CAST(block_time AS BIGINT) >= EXTRACT(EPOCH FROM TO_TIMESTAMP(%s, 'YYYY-MM-DD'))")
         query_params.append(start_date)
         
     if end_date:
-        where_conditions.append("block_time <= TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second'")
+        where_conditions.append("CAST(block_time AS BIGINT) <= EXTRACT(EPOCH FROM TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second')")
         query_params.append(end_date)
     
     # JSONB filters - adapt these based on your actual swap_details structure
@@ -437,11 +444,11 @@ async def get_swap_stats(
     query_params = []
     
     if start_date:
-        where_conditions.append("block_time >= TO_TIMESTAMP(%s, 'YYYY-MM-DD')")
+        where_conditions.append("CAST(block_time AS BIGINT) >= EXTRACT(EPOCH FROM TO_TIMESTAMP(%s, 'YYYY-MM-DD'))")
         query_params.append(start_date)
         
     if end_date:
-        where_conditions.append("block_time <= TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second'")
+        where_conditions.append("CAST(block_time AS BIGINT) <= EXTRACT(EPOCH FROM TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second')")
         query_params.append(end_date)
     
     if token:
@@ -457,7 +464,7 @@ async def get_swap_stats(
     # Get stats by time period
     stats_query = f"""
     SELECT 
-        date_trunc('{trunc_function}', block_time::timestamp) as time_period,
+        date_trunc('{trunc_function}', TO_TIMESTAMP(CAST(block_time AS BIGINT))) as time_period,
         COUNT(*) as swap_count,
         COUNT(DISTINCT user_address) as unique_users
     FROM swaps
@@ -550,16 +557,29 @@ async def get_swaps_by_address_and_contract(
     
     # Contract principal filter
     if contract_principal:
-        where_conditions.append("swap_details::text ILIKE %s")
-        query_params.append(f"%{contract_principal}%")
+        where_conditions.append("""
+        (
+            swap_details::text ILIKE %s
+            OR EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(swap_details) as swap_item
+                WHERE 
+                    swap_item->>'in_asset' LIKE %s
+                    OR swap_item->>'out_asset' LIKE %s
+                    OR swap_item->>'contract_address' LIKE %s
+            )
+        )
+        """)
+        contract_like = f"%{contract_principal}%"
+        query_params.extend([contract_like, contract_like, contract_like, contract_like])
     
     # Date filters
     if start_date:
-        where_conditions.append("block_time >= TO_TIMESTAMP(%s, 'YYYY-MM-DD')")
+        where_conditions.append("CAST(block_time AS BIGINT) >= EXTRACT(EPOCH FROM TO_TIMESTAMP(%s, 'YYYY-MM-DD'))")
         query_params.append(start_date)
         
     if end_date:
-        where_conditions.append("block_time <= TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second'")
+        where_conditions.append("CAST(block_time AS BIGINT) <= EXTRACT(EPOCH FROM TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second')")
         query_params.append(end_date)
     
     # Combine all conditions
