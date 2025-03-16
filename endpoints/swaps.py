@@ -60,14 +60,14 @@ async def get_recent_swaps(
     query_params = []
     
     if start_date:
-        where_clause += " WHERE block_time >= %s"
+        where_clause += " WHERE block_time >= TO_TIMESTAMP(%s, 'YYYY-MM-DD')"
         query_params.append(start_date)
         
     if end_date:
         if where_clause:
-            where_clause += " AND block_time <= %s"
+            where_clause += " AND block_time <= TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second'"
         else:
-            where_clause += " WHERE block_time <= %s"
+            where_clause += " WHERE block_time <= TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second'"
         query_params.append(end_date)
     
     # Count total swaps
@@ -115,6 +115,7 @@ async def get_recent_swaps(
 @router.get("/contract/{contract_principal}", response_model=SuccessResponse)
 async def get_swaps_by_contract(
     contract_principal: str = Path(..., description="Contract principal to filter by"),
+    user_address: str = Query(None, description="Optional user address to filter by"),
     limit: int = Query(50, description="Number of swaps to return (default: 50)"),
     offset: int = Query(0, description="Pagination offset"),
     start_date: str = Query(None, description="Filter by start date (format: YYYY-MM-DD)"),
@@ -125,6 +126,7 @@ async def get_swaps_by_contract(
     Get swap transactions containing the specified contract principal in swap_details.
     
     - **contract_principal**: Contract principal to filter by
+    - **user_address**: Optional user address to filter by
     - **limit**: Number of swaps to return (default: 50)
     - **offset**: Pagination offset
     - **start_date**: Filter by start date (format: YYYY-MM-DD)
@@ -133,7 +135,8 @@ async def get_swaps_by_contract(
     """
     if debug:
         logger.setLevel(logging.DEBUG)
-        logger.debug(f"Request params: contract_principal={contract_principal}, limit={limit}, offset={offset}, start_date={start_date}, end_date={end_date}")
+        logger.debug(f"Request params: contract_principal={contract_principal}, user_address={user_address}, " +
+                    f"limit={limit}, offset={offset}, start_date={start_date}, end_date={end_date}")
     
     # Use the GIN index for efficient JSONB search
     # There are two ways to search: either directly on specific keys if they exist,
@@ -151,12 +154,17 @@ async def get_swaps_by_contract(
     where_clause = f"WHERE {filter_condition}"
     query_params = [search_param]
     
+    # Add user_address filter if provided
+    if user_address:
+        where_clause += " AND user_address = %s"
+        query_params.append(user_address)
+    
     if start_date:
-        where_clause += " AND block_time >= %s"
+        where_clause += " AND block_time >= TO_TIMESTAMP(%s, 'YYYY-MM-DD')"
         query_params.append(start_date)
         
     if end_date:
-        where_clause += " AND block_time <= %s"
+        where_clause += " AND block_time <= TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second'"
         query_params.append(end_date)
     
     # Count total swaps with this contract
@@ -230,11 +238,11 @@ async def get_swaps_by_user(
     query_params = [user_address]
     
     if start_date:
-        where_clause += " AND block_time >= %s"
+        where_clause += " AND block_time >= TO_TIMESTAMP(%s, 'YYYY-MM-DD')"
         query_params.append(start_date)
         
     if end_date:
-        where_clause += " AND block_time <= %s"
+        where_clause += " AND block_time <= TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second'"
         query_params.append(end_date)
     
     # Count total swaps for this user
@@ -317,11 +325,11 @@ async def filter_swaps(
     
     # Date filters
     if start_date:
-        where_conditions.append("block_time >= %s")
+        where_conditions.append("block_time >= TO_TIMESTAMP(%s, 'YYYY-MM-DD')")
         query_params.append(start_date)
         
     if end_date:
-        where_conditions.append("block_time <= %s")
+        where_conditions.append("block_time <= TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second'")
         query_params.append(end_date)
     
     # JSONB filters - adapt these based on your actual swap_details structure
@@ -429,11 +437,11 @@ async def get_swap_stats(
     query_params = []
     
     if start_date:
-        where_conditions.append("block_time >= %s")
+        where_conditions.append("block_time >= TO_TIMESTAMP(%s, 'YYYY-MM-DD')")
         query_params.append(start_date)
         
     if end_date:
-        where_conditions.append("block_time <= %s")
+        where_conditions.append("block_time <= TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second'")
         query_params.append(end_date)
     
     if token:
@@ -503,4 +511,105 @@ async def get_swap_stats(
             "period_stats": stats_data,
             "total_stats": total_stats
         }
+    }
+
+@router.get("/address-contract", response_model=SuccessResponse)
+async def get_swaps_by_address_and_contract(
+    user_address: str = Query(None, description="User address to filter by"),
+    contract_principal: str = Query(None, description="Contract principal to filter by"),
+    limit: int = Query(50, description="Number of swaps to return (default: 50)"),
+    offset: int = Query(0, description="Pagination offset"),
+    start_date: str = Query(None, description="Filter by start date (format: YYYY-MM-DD)"),
+    end_date: str = Query(None, description="Filter by end date (format: YYYY-MM-DD)"),
+    debug: bool = Query(False, description="Show debug info in logs")
+):
+    """
+    Get swap transactions with flexible filtering by address and/or contract.
+    
+    - **user_address**: User address to filter by (optional)
+    - **contract_principal**: Contract principal to filter by (optional)
+    - **limit**: Number of swaps to return (default: 50)
+    - **offset**: Pagination offset
+    - **start_date**: Filter by start date (format: YYYY-MM-DD)
+    - **end_date**: Filter by end date (format: YYYY-MM-DD)
+    - **debug**: Enable debug mode to see SQL queries in logs
+    """
+    if debug:
+        logger.setLevel(logging.DEBUG)
+        logger.debug(f"Request params: user_address={user_address}, contract_principal={contract_principal}, " +
+                     f"limit={limit}, offset={offset}, start_date={start_date}, end_date={end_date}")
+    
+    # Build the WHERE clause based on filters
+    where_conditions = []
+    query_params = []
+    
+    # User address filter
+    if user_address:
+        where_conditions.append("user_address = %s")
+        query_params.append(user_address)
+    
+    # Contract principal filter
+    if contract_principal:
+        where_conditions.append("swap_details::text ILIKE %s")
+        query_params.append(f"%{contract_principal}%")
+    
+    # Date filters
+    if start_date:
+        where_conditions.append("block_time >= TO_TIMESTAMP(%s, 'YYYY-MM-DD')")
+        query_params.append(start_date)
+        
+    if end_date:
+        where_conditions.append("block_time <= TO_TIMESTAMP(%s, 'YYYY-MM-DD') + INTERVAL '1 day' - INTERVAL '1 second'")
+        query_params.append(end_date)
+    
+    # Combine all conditions
+    where_clause = ""
+    if where_conditions:
+        where_clause = "WHERE " + " AND ".join(where_conditions)
+    
+    # If no filters are provided, we add a small time filter to avoid returning all records
+    if not where_conditions:
+        where_clause = "WHERE block_time >= NOW() - INTERVAL '7 days'"
+    
+    # Count total swaps matching filters
+    count_query = f"SELECT COUNT(*) FROM swaps {where_clause}"
+    count_result = execute_query(
+        debug_sql(count_query, query_params) if debug else count_query,
+        query_params
+    )
+    total = count_result[0]["count"] if count_result else 0
+    
+    # Get filtered swaps
+    swaps_query = f"""
+    SELECT tx_id, user_address, block_time, swap_details
+    FROM swaps
+    {where_clause}
+    ORDER BY block_time DESC, tx_id
+    LIMIT %s OFFSET %s
+    """
+    
+    # Add limit and offset to params
+    params = query_params + [limit, offset]
+    swaps_result = execute_query(
+        debug_sql(swaps_query, params) if debug else swaps_query,
+        params
+    )
+    
+    swaps_data = []
+    if swaps_result:
+        for row in swaps_result:
+            swap_data = {
+                "tx_id": row["tx_id"],
+                "user_address": row["user_address"],
+                "block_time": row["block_time"],
+                "swap_details": row["swap_details"]
+            }
+            swaps_data.append(swap_data)
+    
+    return {
+        "status": "success",
+        "data": swaps_data,
+        "total": total,
+        "limit": limit,
+        "offset": offset
     } 
