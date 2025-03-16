@@ -72,11 +72,11 @@ async def get_recent_swaps(
     
     # Count total swaps
     count_query = f"SELECT COUNT(*) FROM swaps{where_clause}"
-    count_result = await execute_query(
+    count_result = execute_query(
         debug_sql(count_query, query_params) if debug else count_query,
         query_params
     )
-    total = count_result[0][0] if count_result else 0
+    total = count_result[0]["count"] if count_result else 0
     
     # Get recent swaps
     swaps_query = f"""
@@ -88,7 +88,7 @@ async def get_recent_swaps(
     
     # Add limit and offset to params
     params = query_params + [limit, offset]
-    swaps_result = await execute_query(
+    swaps_result = execute_query(
         debug_sql(swaps_query, params) if debug else swaps_query,
         params
     )
@@ -97,10 +97,10 @@ async def get_recent_swaps(
     if swaps_result:
         for row in swaps_result:
             swap_data = {
-                "tx_id": row[0],
-                "user_address": row[1],
-                "block_time": row[2],
-                "swap_details": row[3]
+                "tx_id": row["tx_id"],
+                "user_address": row["user_address"],
+                "block_time": row["block_time"],
+                "swap_details": row["swap_details"]
             }
             swaps_data.append(swap_data)
     
@@ -161,11 +161,11 @@ async def get_swaps_by_contract(
     
     # Count total swaps with this contract
     count_query = f"SELECT COUNT(*) FROM swaps {where_clause}"
-    count_result = await execute_query(
+    count_result = execute_query(
         debug_sql(count_query, query_params) if debug else count_query,
         query_params
     )
-    total = count_result[0][0] if count_result else 0
+    total = count_result[0]["count"] if count_result else 0
     
     # Get filtered swaps
     swaps_query = f"""
@@ -178,7 +178,7 @@ async def get_swaps_by_contract(
     
     # Add limit and offset to params
     params = query_params + [limit, offset]
-    swaps_result = await execute_query(
+    swaps_result = execute_query(
         debug_sql(swaps_query, params) if debug else swaps_query,
         params
     )
@@ -187,10 +187,10 @@ async def get_swaps_by_contract(
     if swaps_result:
         for row in swaps_result:
             swap_data = {
-                "tx_id": row[0],
-                "user_address": row[1],
-                "block_time": row[2],
-                "swap_details": row[3]
+                "tx_id": row["tx_id"],
+                "user_address": row["user_address"],
+                "block_time": row["block_time"],
+                "swap_details": row["swap_details"]
             }
             swaps_data.append(swap_data)
     
@@ -239,11 +239,11 @@ async def get_swaps_by_user(
     
     # Count total swaps for this user
     count_query = f"SELECT COUNT(*) FROM swaps {where_clause}"
-    count_result = await execute_query(
+    count_result = execute_query(
         debug_sql(count_query, query_params) if debug else count_query,
         query_params
     )
-    total = count_result[0][0] if count_result else 0
+    total = count_result[0]["count"] if count_result else 0
     
     # Get user's swaps
     swaps_query = f"""
@@ -256,7 +256,7 @@ async def get_swaps_by_user(
     
     # Add limit and offset to params
     params = query_params + [limit, offset]
-    swaps_result = await execute_query(
+    swaps_result = execute_query(
         debug_sql(swaps_query, params) if debug else swaps_query,
         params
     )
@@ -265,10 +265,10 @@ async def get_swaps_by_user(
     if swaps_result:
         for row in swaps_result:
             swap_data = {
-                "tx_id": row[0],
-                "user_address": row[1],
-                "block_time": row[2],
-                "swap_details": row[3]
+                "tx_id": row["tx_id"],
+                "user_address": row["user_address"],
+                "block_time": row["block_time"],
+                "swap_details": row["swap_details"]
             }
             swaps_data.append(swap_data)
     
@@ -355,11 +355,11 @@ async def filter_swaps(
     
     # Count total swaps matching filters
     count_query = f"SELECT COUNT(*) FROM swaps {where_clause}"
-    count_result = await execute_query(
+    count_result = execute_query(
         debug_sql(count_query, query_params) if debug else count_query,
         query_params
     )
-    total = count_result[0][0] if count_result else 0
+    total = count_result[0]["count"] if count_result else 0
     
     # Get filtered swaps
     swaps_query = f"""
@@ -372,7 +372,7 @@ async def filter_swaps(
     
     # Add limit and offset to params
     params = query_params + [limit, offset]
-    swaps_result = await execute_query(
+    swaps_result = execute_query(
         debug_sql(swaps_query, params) if debug else swaps_query,
         params
     )
@@ -381,10 +381,10 @@ async def filter_swaps(
     if swaps_result:
         for row in swaps_result:
             swap_data = {
-                "tx_id": row[0],
-                "user_address": row[1],
-                "block_time": row[2],
-                "swap_details": row[3]
+                "tx_id": row["tx_id"],
+                "user_address": row["user_address"],
+                "block_time": row["block_time"],
+                "swap_details": row["swap_details"]
             }
             swaps_data.append(swap_data)
     
@@ -458,7 +458,7 @@ async def get_swap_stats(
     ORDER BY time_period DESC
     """
     
-    stats_result = await execute_query(
+    stats_result = execute_query(
         debug_sql(stats_query, query_params) if debug else stats_query,
         query_params
     )
@@ -473,7 +473,7 @@ async def get_swap_stats(
     {where_clause}
     """
     
-    total_result = await execute_query(
+    total_result = execute_query(
         debug_sql(total_query, query_params) if debug else total_query,
         query_params
     )
@@ -483,18 +483,18 @@ async def get_swap_stats(
     if stats_result:
         for row in stats_result:
             period_data = {
-                "period": row[0].strftime('%Y-%m-%d') if row[0] else None,
-                "swap_count": row[1],
-                "unique_users": row[2]
+                "period": row["time_period"].strftime('%Y-%m-%d') if row["time_period"] else None,
+                "swap_count": row["swap_count"],
+                "unique_users": row["unique_users"]
             }
             stats_data.append(period_data)
     
     total_stats = {}
     if total_result and total_result[0]:
         total_stats = {
-            "total_swaps": total_result[0][0],
-            "total_unique_users": total_result[0][1],
-            "total_transactions": total_result[0][2]
+            "total_swaps": total_result[0]["total_swaps"],
+            "total_unique_users": total_result[0]["total_unique_users"],
+            "total_transactions": total_result[0]["total_transactions"]
         }
     
     return {
