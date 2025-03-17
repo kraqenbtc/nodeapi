@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from endpoints.transactions import router as transactions_router
 from endpoints.tokens import router as tokens_router
 from endpoints.swaps import router as swaps_router
+from endpoints.prices import router as prices_router
 from models.responses import ErrorResponse
 
 # Import custom middleware
@@ -91,6 +92,7 @@ async def clear_cache_endpoint():
 app.include_router(transactions_router)  # prefix="/transactions" is already in the router definition
 app.include_router(tokens_router)        # prefix="/tokens" is already in the router definition
 app.include_router(swaps_router)          # New router for swaps
+app.include_router(prices_router)         # New router for prices
 
 # Start application (if run directly)
 if __name__ == "__main__":

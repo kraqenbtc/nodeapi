@@ -119,7 +119,7 @@ def release_connection(conn):
     return False
 
 @cached_query(ttl=60)  # Sonuçları 60 saniyeliğine önbellekle
-def execute_query(query, params=None, bypass_cache=False):
+def execute_query(query, params=None, bypass_cache=False, db_config=None):
     """
     SQL sorgusu yürütür ve sonuçları döndürür
     
@@ -127,11 +127,30 @@ def execute_query(query, params=None, bypass_cache=False):
         query (str): Çalıştırılacak SQL sorgusu
         params (tuple, optional): SQL parametreleri
         bypass_cache (bool, optional): Önbelleği atlayıp doğrudan sorgu çalıştırır
+        db_config (dict, optional): Alternatif veritabanı bağlantı parametreleri
         
     Returns:
         list: Sorgu sonuçları (dict formatta)
     """
-    conn = get_db_connection()
+    if db_config:
+        # Özel bağlantı parametreleri ile bağlantı kur
+        try:
+            conn = psycopg2.connect(
+                host=db_config.get("host", DB_HOST),
+                port=db_config.get("port", DB_PORT),
+                database=db_config.get("database", DB_NAME),
+                user=db_config.get("user", DB_USER),
+                password=db_config.get("password", DB_PASSWORD),
+                connect_timeout=CONNECTION_TIMEOUT
+            )
+            conn.autocommit = True
+        except (Exception, psycopg2.Error) as error:
+            logger.error(f"Özel veritabanı bağlantısı başarısız: {error}")
+            return []
+    else:
+        # Normal havuz bağlantısı
+        conn = get_db_connection()
+        
     if not conn:
         logger.error("Veritabanı bağlantısı kurulamadı")
         return []
@@ -161,7 +180,10 @@ def execute_query(query, params=None, bypass_cache=False):
         if cursor:
             cursor.close()
         
-        # Bağlantıyı havuza geri döndür veya kapat
-        release_connection(conn)
+        # Özel bağlantı kullanıldıysa doğrudan kapat, havuz kullanıldıysa havuza döndür
+        if db_config:
+            conn.close()
+        else:
+            release_connection(conn)
     
     return results 
